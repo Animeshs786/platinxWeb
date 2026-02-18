@@ -1,6 +1,7 @@
 
 
 
+
 import React, { useState } from "react";
 import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
@@ -25,32 +26,37 @@ function App() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
         background: "#060810",
         display: "flex",
         flexDirection: "column",
         fontFamily: "'DM Mono','JetBrains Mono',monospace",
+        overflow: "hidden",
       }}
     >
-      {/* ── Top Navbar ── */}
-      <Header />
+      {/* ── Top Header (Fixed) ── */}
+      <div style={{ flexShrink: 0 }}>
+        <Header />
+      </div>
 
       {/* ── Main Body ── */}
       <div style={{ flex: 1, display: "flex", position: "relative", minHeight: 0 }}>
 
-        {/* ── Sidebar (always visible) ── */}
-        <Sidebar
-          onShowPanel={handleShowPanel}
-          onSelectCoin={handleSelectCoin}
-          selectedCoin={selectedCoin?.symbol || "BTC/INR"}
-        />
+        {/* ── Sidebar (Fixed, always visible) ── */}
+        <div style={{ flexShrink: 0 }}>
+          <Sidebar
+            onShowPanel={handleShowPanel}
+            onSelectCoin={handleSelectCoin}
+            selectedCoin={selectedCoin?.symbol || "BTC/INR"}
+          />
+        </div>
 
         {/* ── CoinList Panel (overlay on hover) ── */}
         {showCoinList && (
           <div
             style={{
               position: "absolute",
-              left: 52,           // sidebar width
+              left: 52,
               top: 0,
               height: "100%",
               zIndex: 50,
@@ -66,66 +72,78 @@ function App() {
           </div>
         )}
 
-        {/* ── Trading Area ── */}
+        {/* ── Trading Area (Scrollable middle + Fixed bottom ticker) ── */}
         <div
           style={{
             flex: 1,
             display: "flex",
             flexDirection: "column",
             minWidth: 0,
+            height: "100%",
           }}
         >
-          {/* ── 3-Column Row: Chart | OrderBook | OrderForm ── */}
+          {/* Scrollable Content */}
           <div
             style={{
               flex: 1,
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 55fr) minmax(220px, 22fr) minmax(220px, 23fr)",
-              gap: 0,
-              borderTop: "1px solid rgba(255,255,255,0.05)",
-              margin: "6px 0 0 6px",
-              minHeight: 680,
-              alignItems: "stretch",
+              overflowY: "auto",
+              overflowX: "hidden",
             }}
           >
-            {/* ── Column 1: Chart ── */}
+            {/* ── 3-Column Row: Chart | OrderBook | OrderForm ── */}
             <div
               style={{
-                borderRight: "1px solid rgba(255,255,255,0.05)",
-                display: "flex",
-                flexDirection: "column",
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 55fr) minmax(220px, 22fr) minmax(220px, 23fr)",
+                gap: 0,
+                borderTop: "1px solid rgba(255,255,255,0.05)",
+                margin: "6px 0 0 6px",
+                minHeight: 623,
               }}
             >
-              <TradingChart selectedCoin={selectedCoin} />
+              {/* ── Column 1: Chart ── */}
+              <div
+                style={{
+                  borderRight: "1px solid rgba(255,255,255,0.05)",
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <TradingChart selectedCoin={selectedCoin} />
+              </div>
+
+              {/* ── Column 2: Order Book / Last Trades ── */}
+              <div
+                style={{
+                  borderRight: "1px solid rgba(255,255,255,0.05)",
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <OrderBookTrades selectedCoin={selectedCoin} />
+              </div>
+
+              {/* ── Column 3: Order Placement ── */}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <OrderPlacement selectedCoin={selectedCoin} />
+              </div>
             </div>
 
-            {/* ── Column 2: Order Book / Last Trades ── */}
-            <div
-              style={{
-                borderRight: "1px solid rgba(255,255,255,0.05)",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <OrderBookTrades selectedCoin={selectedCoin} />
-            </div>
-
-            {/* ── Column 3: Order Placement ── */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <OrderPlacement selectedCoin={selectedCoin} />
+            {/* Portfolio page */}
+            <div style={{ margin: "6px" }}>
+              <OrdersPortfolioPage />
             </div>
           </div>
 
-          {/* porfolio page */}
-          <OrdersPortfolioPage />
-
-          {/* ── Bottom Ticker ── */}
-          <MarketTicker />
+          {/* ── Bottom Ticker (Fixed) ── */}
+          <div style={{ flexShrink: 0 }}>
+            <MarketTicker />
+          </div>
         </div>
       </div>
     </div>
@@ -133,12 +151,6 @@ function App() {
 }
 
 export default App;
-
-
-
-
-
-
 
 
 
@@ -158,7 +170,7 @@ export default App;
 // import MarketTicker from "./components/MarketTicker";
 // import OrderBookTrades from "./components/OrderBookTrades";
 // import OrderPlacement from "./components/OrderPlacement";
-// import SpotOrders from "./Pages/SportOrder";
+// import SpotOrders from "./Pages/SportOrderPage";
 
 // function App() {
 //   const [showCoinList, setShowCoinList] = useState(false);
