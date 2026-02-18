@@ -58,7 +58,7 @@ const OrdersPortfolioPage = () => {
         >
           PORTFOLIO
           {activeTab === 'portfolio' && (
-            <span style={{ marginLeft: 6, color: '#000', opacity: 0.7 }}>-0.39%</span>
+            <span style={{ marginLeft: 6, color: '#000', opacity: 0.7 }}></span>
           )}
         </button>
 
