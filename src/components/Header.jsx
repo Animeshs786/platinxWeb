@@ -49,13 +49,6 @@ const Header = () => {
                 </div>
               )}
             </div>
-
-            <button className="text-gray-300 hover:text-white text-sm transition-colors">
-              Smartinvest
-            </button>
-            <button className="text-gray-300 hover:text-white text-sm transition-colors">
-              Affiliate Program
-            </button>
           </nav>
         </div>
 
