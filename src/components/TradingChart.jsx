@@ -1,14 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
+import { useTradingContext } from "../context/TradingContext";
 
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
-const API_URL =
-  "http://159.89.146.245:3535/api/coinswitch/spot/ticker/single?symbol=BTC/INR&exchange=coinswitchx";
-const BASE_URL = "wss://ws.coinswitch.co";
-const NAMESPACE = "/coinswitchx";
-const PAIR = "BTC,INR";
-const EVENT_NAME = "FETCH_TRADES_CS_PRO";
-
+// ─── TIMEFRAMES & CHART TYPES ────────────────────────────────────────────────
 const TIMEFRAMES = [
   { label: "1m", interval: "1" },
   { label: "5m", interval: "5" },
@@ -27,150 +21,222 @@ const CHART_TYPES = [
   { label: "Bars", style: "0" },
 ];
 
+// ─── DYNAMIC TV SYMBOL MAPPING ───────────────────────────────────────────────
+// Maps base coin → TradingView symbol (INR proxy via USDINR FX rate)
+const TV_SYMBOL_MAP = {
+  BTC: "BITSTAMP:BTCUSD * FX_IDC:USDINR",
+  ETH: "BITSTAMP:ETHUSD * FX_IDC:USDINR",
+  SOL: "COINBASE:SOLUSD * FX_IDC:USDINR",
+  BNB: "BINANCE:BNBUSDT * FX_IDC:USDINR",
+  XRP: "BITSTAMP:XRPUSD * FX_IDC:USDINR",
+  ADA: "BINANCE:ADAUSDT * FX_IDC:USDINR",
+  DOGE: "BINANCE:DOGEUSDT * FX_IDC:USDINR",
+  MATIC: "BINANCE:MATICUSDT * FX_IDC:USDINR",
+  DOT: "BINANCE:DOTUSDT * FX_IDC:USDINR",
+  AVAX: "BINANCE:AVAXUSDT * FX_IDC:USDINR",
+  SHIB: "BINANCE:SHIBUSDT * FX_IDC:USDINR",
+  LTC: "BITSTAMP:LTCUSD * FX_IDC:USDINR",
+  LINK: "BINANCE:LINKUSDT * FX_IDC:USDINR",
+  UNI: "BINANCE:UNIUSDT * FX_IDC:USDINR",
+  ATOM: "BINANCE:ATOMUSDT * FX_IDC:USDINR",
+  TRX: "BINANCE:TRXUSDT * FX_IDC:USDINR",
+  // For unknown pairs → fallback to BINANCE:{BASE}USDT * USDINR
+
+  BAN: "BITGET:BANUSDT * FX_IDC:USDINR",
+  LIGHT: "BITGET:LIGHTUSDT * FX_IDC:USDINR",
+  USDT: "FX_IDC:USDINR",
+};
+
+const getTVSymbol = (symbol) => {
+  const base = symbol?.split("/")[0]?.toUpperCase() || "BTC";
+  return TV_SYMBOL_MAP[base] || `BINANCE:${base}USDT * FX_IDC:USDINR`;
+};
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 const TradingChart = () => {
+  const { selectedPair } = useTradingContext();
+
+  const SYMBOL = selectedPair?.symbol || "BTC/INR";
+  const EXCHANGE = selectedPair?.exchange || "coinswitchx";
+  const BASE_PAIR = SYMBOL.replace("/", ",");
+
+  const TICKER_API = `http://159.89.146.245:3535/api/coinswitch/spot/ticker/single?symbol=${SYMBOL}&exchange=${EXCHANGE}`;
+
   const containerRef = useRef(null);
   const widgetRef = useRef(null);
   const socketRef = useRef(null);
   const scriptLoadedRef = useRef(false);
 
-  const [currentPrice, setCurrentPrice] = useState("6700292");
-  const [prevPrice, setPrevPrice] = useState("6700292");
+  // Track previous SYMBOL to detect changes
+  const prevSymbolRef = useRef(SYMBOL);
+
+  const [currentPrice, setCurrentPrice] = useState("0");
+  const [prevPrice, setPrevPrice] = useState("0");
   const [priceFlash, setPriceFlash] = useState("");
   const [activeTimeframe, setActiveTimeframe] = useState("60");
   const [activeStyle, setActiveStyle] = useState("1");
   const [isConnected, setIsConnected] = useState(false);
   const [tickerData, setTickerData] = useState({
-    percentageChange: "0.35",
-    highPrice: "6791000",
-    lowPrice: "6556987",
-    quoteVolume: "7672219",
-    baseVolume: "1.15",
+    percentageChange: "0.00",
+    highPrice: "0",
+    lowPrice: "0",
+    quoteVolume: "0",
+    baseVolume: "0",
   });
 
-  // ── Fetch ticker ──────────────────────────────────────────────────────────
+  // ── Fetch ticker ───────────────────────────────────────────────────────────
   const fetchTicker = useCallback(async () => {
     try {
-      const res = await fetch(API_URL);
+      const res = await fetch(TICKER_API);
       const json = await res.json();
-      if (json.success) {
-        const d = json.data.data.coinswitchx;
+      if (json.success && json.data?.data?.[EXCHANGE]) {
+        const d = json.data.data[EXCHANGE];
         setTickerData({
-          percentageChange: d.percentageChange,
-          highPrice: d.highPrice,
-          lowPrice: d.lowPrice,
-          quoteVolume: d.quoteVolume,
-          baseVolume: d.baseVolume,
+          percentageChange: d.percentageChange || "0.00",
+          highPrice: d.highPrice || "0",
+          lowPrice: d.lowPrice || "0",
+          quoteVolume: d.quoteVolume || "0",
+          baseVolume: d.baseVolume || "0",
         });
+        if (d.lastPrice) {
+          setCurrentPrice(d.lastPrice);
+          setPrevPrice(d.lastPrice);
+        }
       }
     } catch (e) {
       console.error("Ticker fetch error:", e);
     }
-  }, []);
+  }, [TICKER_API, EXCHANGE]);
 
-  // ── Handle live trade ─────────────────────────────────────────────────────
+  // ── Handle live trade ──────────────────────────────────────────────────────
   const handleTrade = useCallback(
     (data) => {
-      if (data?.s === PAIR && data?.p) {
+      if (data?.s === BASE_PAIR && data?.p) {
         setPrevPrice((prev) => {
           const dir = Number(data.p) >= Number(prev) ? "up" : "down";
           setPriceFlash(dir);
           setTimeout(() => setPriceFlash(""), 600);
-          return prev;
+          return data.p;
         });
         setCurrentPrice(data.p);
         fetchTicker();
       }
     },
-    [fetchTicker],
+    [BASE_PAIR, fetchTicker],
   );
 
-  // ── WebSocket ─────────────────────────────────────────────────────────────
+  // ── WebSocket ──────────────────────────────────────────────────────────────
   useEffect(() => {
+    // Reset price state when pair changes
+    setCurrentPrice("0");
+    setPrevPrice("0");
+    setPriceFlash("");
     fetchTicker();
-    const socket = io(BASE_URL + NAMESPACE, {
+
+    const socket = io("wss://ws.coinswitch.co" + "/coinswitchx", {
       path: "/pro/realtime-rates-socket/spot/coinswitchx",
       transports: ["websocket"],
       reconnection: true,
       reconnectionDelay: 3000,
     });
     socketRef.current = socket;
+
     socket.on("connect", () => {
       setIsConnected(true);
-      socket.emit(EVENT_NAME, { event: "subscribe", pair: PAIR });
+      socket.emit("FETCH_TRADES_CS_PRO", {
+        event: "subscribe",
+        pair: BASE_PAIR,
+      });
     });
-    socket.on(EVENT_NAME, handleTrade);
+
+    socket.on("FETCH_TRADES_CS_PRO", handleTrade);
     socket.on("disconnect", () => setIsConnected(false));
     socket.on("connect_error", (e) => console.error("WS error:", e.message));
-    return () => socket.disconnect();
-  }, [fetchTicker, handleTrade]);
 
-  // ── Build widget ──────────────────────────────────────────────────────────
-  const buildWidget = useCallback((interval, style) => {
-    if (!containerRef.current || !window.TradingView) return;
-    if (widgetRef.current?.remove) widgetRef.current.remove();
-    widgetRef.current = null;
-    const container = document.getElementById("tradingview_chart_container");
-    if (container) container.innerHTML = "";
+    return () => {
+      socket.disconnect();
+    };
+  }, [BASE_PAIR, fetchTicker, handleTrade]);
 
-    widgetRef.current = new window.TradingView.widget({
-      autosize: true,
-      symbol: "BITSTAMP:BTCUSD * FX_IDC:USDINR",
-      interval,
-      timezone: "Asia/Kolkata",
-      theme: "dark",
-      style,
-      locale: "en",
-      toolbar_bg: "#0b0e17",
-      enable_publishing: false,
-      hide_top_toolbar: true,
-      hide_legend: false,
-      save_image: false,
-      backgroundColor: "#0b0e17",
-      gridColor: "rgba(255,255,255,0.03)",
-      studies: [
-        "MAExp@tv-basicstudies",
-        "MASimple@tv-basicstudies",
-        "Volume@tv-basicstudies",
-      ],
-      studies_overrides: {
-        "moving average exponential.length": 9,
-        "moving average exponential.plot.color": "#a855f7",
-        "moving average exponential.plot.linewidth": 2,
-        "moving average simple.length": 30,
-        "moving average simple.plot.color": "#f59e0b",
-        "moving average simple.plot.linewidth": 2,
-      },
-      overrides: {
-        "mainSeriesProperties.candleStyle.upColor": "#22c55e",
-        "mainSeriesProperties.candleStyle.downColor": "#ef4444",
-        "mainSeriesProperties.candleStyle.borderUpColor": "#22c55e",
-        "mainSeriesProperties.candleStyle.borderDownColor": "#ef4444",
-        "mainSeriesProperties.candleStyle.wickUpColor": "#22c55e",
-        "mainSeriesProperties.candleStyle.wickDownColor": "#ef4444",
-        "paneProperties.background": "#0b0e17",
-        "paneProperties.backgroundType": "solid",
-        "paneProperties.vertGridProperties.color": "rgba(255,255,255,0.03)",
-        "paneProperties.horzGridProperties.color": "rgba(255,255,255,0.03)",
-        "scalesProperties.textColor": "#6b7280",
-        "scalesProperties.lineColor": "rgba(255,255,255,0.06)",
-      },
-      container_id: "tradingview_chart_container",
-      withdateranges: true,
-      allow_symbol_change: false,
-      details: false,
-      hotlist: false,
-      calendar: false,
-    });
-  }, []);
+  // ── TradingView widget builder ─────────────────────────────────────────────
+  // NOTE: SYMBOL is now in the dependency array so widget rebuilds on pair change
+  const buildWidget = useCallback(
+    (interval, style) => {
+      if (!containerRef.current || !window.TradingView) return;
 
-  // ── Script load ───────────────────────────────────────────────────────────
+      // Destroy previous widget
+      if (widgetRef.current?.remove) widgetRef.current.remove();
+      widgetRef.current = null;
+
+      const container = document.getElementById("tradingview_chart_container");
+      if (container) container.innerHTML = "";
+
+      // ← KEY FIX: derive symbol dynamically from current SYMBOL
+      const tvSymbol = getTVSymbol(SYMBOL);
+
+      widgetRef.current = new window.TradingView.widget({
+        autosize: true,
+        symbol: tvSymbol, // ← was hardcoded before
+        interval,
+        timezone: "Asia/Kolkata",
+        theme: "dark",
+        style,
+        locale: "en",
+        toolbar_bg: "#0b0e17",
+        enable_publishing: false,
+        hide_top_toolbar: true,
+        hide_legend: false,
+        save_image: false,
+        backgroundColor: "#0b0e17",
+        gridColor: "rgba(255,255,255,0.03)",
+        studies: [
+          "MAExp@tv-basicstudies",
+          "MASimple@tv-basicstudies",
+          "Volume@tv-basicstudies",
+        ],
+        studies_overrides: {
+          "moving average exponential.length": 9,
+          "moving average exponential.plot.color": "#a855f7",
+          "moving average exponential.plot.linewidth": 2,
+          "moving average simple.length": 30,
+          "moving average simple.plot.color": "#f59e0b",
+          "moving average simple.plot.linewidth": 2,
+        },
+        overrides: {
+          "mainSeriesProperties.candleStyle.upColor": "#22c55e",
+          "mainSeriesProperties.candleStyle.downColor": "#ef4444",
+          "mainSeriesProperties.candleStyle.borderUpColor": "#22c55e",
+          "mainSeriesProperties.candleStyle.borderDownColor": "#ef4444",
+          "mainSeriesProperties.candleStyle.wickUpColor": "#22c55e",
+          "mainSeriesProperties.candleStyle.wickDownColor": "#ef4444",
+          "paneProperties.background": "#0b0e17",
+          "paneProperties.backgroundType": "solid",
+          "paneProperties.vertGridProperties.color": "rgba(255,255,255,0.03)",
+          "paneProperties.horzGridProperties.color": "rgba(255,255,255,0.03)",
+          "scalesProperties.textColor": "#6b7280",
+          "scalesProperties.lineColor": "rgba(255,255,255,0.06)",
+        },
+        container_id: "tradingview_chart_container",
+        withdateranges: true,
+        allow_symbol_change: false,
+        details: false,
+        hotlist: false,
+        calendar: false,
+      });
+    },
+    [SYMBOL], // ← SYMBOL dependency added here
+  );
+
+  // ── Load TradingView script once ───────────────────────────────────────────
   useEffect(() => {
     if (scriptLoadedRef.current) {
       buildWidget(activeTimeframe, activeStyle);
       return;
     }
+
     const existing = document.getElementById("tv-script");
     if (existing) existing.remove();
+
     const script = document.createElement("script");
     script.id = "tv-script";
     script.src = "https://s3.tradingview.com/tv.js";
@@ -180,16 +246,28 @@ const TradingChart = () => {
       buildWidget(activeTimeframe, activeStyle);
     };
     document.body.appendChild(script);
+
     return () => {
       if (script.parentNode) script.parentNode.removeChild(script);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [buildWidget]);
 
+  // ── Rebuild on timeframe / style change ───────────────────────────────────
   useEffect(() => {
     if (scriptLoadedRef.current) buildWidget(activeTimeframe, activeStyle);
   }, [activeTimeframe, activeStyle, buildWidget]);
 
+  // ── KEY FIX: Rebuild chart when selected pair (SYMBOL) changes ─────────────
+  useEffect(() => {
+    if (prevSymbolRef.current !== SYMBOL) {
+      prevSymbolRef.current = SYMBOL;
+      if (scriptLoadedRef.current) {
+        buildWidget(activeTimeframe, activeStyle);
+      }
+    }
+  }, [SYMBOL, activeTimeframe, activeStyle, buildWidget]);
+
+  // ── ResizeObserver ─────────────────────────────────────────────────────────
   useEffect(() => {
     const ro = new ResizeObserver(() => {
       if (widgetRef.current?.activeChart) {
@@ -202,9 +280,9 @@ const TradingChart = () => {
     return () => ro.disconnect();
   }, []);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  const fmt = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
-  const fmtVol = (n) => Number(n).toLocaleString("en-IN");
+  // ── Format helpers ─────────────────────────────────────────────────────────
+  const fmt = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+  const fmtVol = (n) => Number(n || 0).toLocaleString("en-IN");
   const isUp = Number(tickerData.percentageChange) >= 0;
   const priceColor =
     priceFlash === "up"
@@ -213,7 +291,18 @@ const TradingChart = () => {
         ? "#ef4444"
         : "#ffffff";
 
-  // ── Shared style tokens ───────────────────────────────────────────────────
+  const baseCoin = SYMBOL.split("/")[0];
+  const coinIconBg =
+    baseCoin === "BTC"
+      ? "linear-gradient(135deg,#f7931a,#e07b10)"
+      : baseCoin === "ETH"
+        ? "linear-gradient(135deg,#627eea,#3c5bbf)"
+        : baseCoin === "SOL"
+          ? "linear-gradient(135deg,#9945ff,#14f195)"
+          : baseCoin === "BNB"
+            ? "linear-gradient(135deg,#f3ba2f,#d4a017)"
+            : "#a855f7";
+
   const S = {
     bg: "#0b0e17",
     bgBar: "#080b12",
@@ -236,7 +325,7 @@ const TradingChart = () => {
         width: "100%",
       }}
     >
-      {/* ══ HEADER — ROW 1: identity + price + dot ══ */}
+      {/* HEADER */}
       <div
         style={{
           padding: "10px 14px 8px",
@@ -263,7 +352,7 @@ const TradingChart = () => {
               width: 32,
               height: 32,
               flexShrink: 0,
-              background: "linear-gradient(135deg,#f7931a,#e07b10)",
+              background: coinIconBg,
               borderRadius: "50%",
               display: "flex",
               alignItems: "center",
@@ -274,7 +363,7 @@ const TradingChart = () => {
               boxShadow: "0 0 10px rgba(247,147,26,0.35)",
             }}
           >
-            ₿
+            {baseCoin.slice(0, 1)}
           </div>
           <div>
             <div
@@ -286,13 +375,13 @@ const TradingChart = () => {
                 whiteSpace: "nowrap",
               }}
             >
-              BTC / INR
+              {SYMBOL}
               <span style={{ marginLeft: 5, color: "#f59e0b", fontSize: 12 }}>
                 ★
               </span>
             </div>
             <div style={{ color: "#4b5563", fontSize: 10, marginTop: 1 }}>
-              CoinSwitchX · Spot
+              {EXCHANGE.toUpperCase()} · Spot
             </div>
           </div>
         </div>
@@ -340,11 +429,12 @@ const TradingChart = () => {
               whiteSpace: "nowrap",
             }}
           >
-            {isUp ? "▲" : "▼"} {Math.abs(tickerData.percentageChange)}%
+            {isUp ? "▲" : "▼"}{" "}
+            {Math.abs(Number(tickerData.percentageChange)).toFixed(2)}%
           </span>
         </div>
 
-        {/* ── 24H STATS — horizontally scrollable strip on smaller widths ── */}
+        {/* 24H Stats */}
         <div
           style={{
             flex: 1,
@@ -385,7 +475,7 @@ const TradingChart = () => {
                 color: "#9ca3af",
               },
               {
-                label: "Vol BTC",
+                label: "Vol Base",
                 value: fmtVol(tickerData.baseVolume),
                 color: "#9ca3af",
               },
@@ -451,7 +541,7 @@ const TradingChart = () => {
         />
       </div>
 
-      {/* ══ TOOLBAR ══ */}
+      {/* TOOLBAR */}
       <div
         style={{
           padding: "5px 14px",
@@ -463,7 +553,6 @@ const TradingChart = () => {
           flexWrap: "wrap",
         }}
       >
-        {/* Timeframe buttons */}
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf.interval}
@@ -501,7 +590,6 @@ const TradingChart = () => {
           }}
         />
 
-        {/* Chart type buttons */}
         {CHART_TYPES.map((ct) => (
           <button
             key={ct.style}
@@ -530,7 +618,6 @@ const TradingChart = () => {
           </button>
         ))}
 
-        {/* MA legend */}
         <div
           style={{
             marginLeft: "auto",
@@ -552,7 +639,7 @@ const TradingChart = () => {
         </div>
       </div>
 
-      {/* ══ CHART ══ */}
+      {/* CHART CONTAINER */}
       <div ref={containerRef} style={{ flex: 1, minHeight: 0 }}>
         <div
           id="tradingview_chart_container"
@@ -560,7 +647,7 @@ const TradingChart = () => {
         />
       </div>
 
-      {/* ══ FOOTER ══ */}
+      {/* FOOTER */}
       <div
         style={{
           padding: "5px 14px",
@@ -582,7 +669,7 @@ const TradingChart = () => {
             whiteSpace: "nowrap",
           }}
         >
-          Powered by TradingView · BTC/INR via CoinSwitchX
+          Powered by TradingView · {SYMBOL} via {EXCHANGE.toUpperCase()}
         </span>
         <span style={{ flexShrink: 0 }}>
           {isConnected ? (
